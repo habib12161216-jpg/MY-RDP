@@ -1,0 +1,227 @@
+name: RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+    steps:
+      - name: Checkout Repository (Files Download karne ke liye)
+        uses: actions/checkout@v4
+
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 1 -Force
+
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User with Secure Password
+        run: |
+          $randomNum = Get-Random -Minimum 100000 -Maximum 999999
+          $password = "CloudNode@" + $randomNum + "x"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Set-LocalUser -Name "RDP" -PasswordNeverExpires $true
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+
+          # Configure AutoAdminLogon so RDP sessions log in immediately without credential prompt
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name "AutoAdminLogon" -Value "1" -Force
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name "DefaultUserName" -Value "RDP" -Force
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name "DefaultPassword" -Value "$password" -Force
+          
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+          
+          if (-not (Get-LocalUser -Name "RDP")) {
+              Write-Error "User creation failed"
+              exit 1
+          }
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+
+      - name: Establish Tailscale Connection
+        run: |
+          $authKey = "${{ secrets.TAILSCALE_AUTH_KEY }}"
+          if (-not $authKey) {
+              $authKey = "${{ secrets.TAILSCALE_AUTHKEY }}"
+          }
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes
+          
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 12) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          Write-Host "Tailscale IP: $tsIP"
+
+      - name: Save Credentials to Artifact
+        run: |
+          echo "Address: $env:TAILSCALE_IP" > creds.txt
+          echo "Username: RDP" >> creds.txt
+          echo "Password: $env:RDP_PASSWORD" >> creds.txt
+          Write-Host "Credentials generated successfully."
+
+      - name: Upload Credentials Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rdp-credentials
+          path: creds.txt
+          retention-days: 1
+
+      - name: Install Python 3.10 and AdsPower Global Desktop
+        run: |
+          Write-Host "[1/3] Downloading and Installing Python 3.10..."
+          $pyPath = "$env:TEMP\python_setup.exe"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe' -OutFile $pyPath
+          Start-Process $pyPath -ArgumentList '/quiet InstallAllUsers=1 PrependPath=1' -Wait
+          Remove-Item $pyPath -Force -ErrorAction SilentlyContinue
+
+          # Explicitly register Python in Machine PATH for all users (including RDP)
+          [Environment]::SetEnvironmentVariable("PATH", "C:\Program Files\Python310;C:\Program Files\Python310\Scripts;$([Environment]::GetEnvironmentVariable('PATH', 'Machine'))", [EnvironmentVariableTarget]::Machine)
+          $env:PATH = "C:\Program Files\Python310;C:\Program Files\Python310\Scripts;$env:PATH"
+
+          Write-Host "[2/3] Downloading AdsPower Global Official Installer..."
+          $adsPath = "$env:TEMP\AdsPower-Global-Setup.exe"
+          Invoke-WebRequest -Uri 'https://version.adspower.net/software/win64-global/8.7.23/AdsPower-Global-8.7.23-x64.exe' -OutFile $adsPath
+          Write-Host "[3/3] Installing AdsPower Global silently for all users..."
+          Start-Process -FilePath $adsPath -ArgumentList "/S", "/allusers" -Wait
+          Start-Sleep -Seconds 5
+          Remove-Item $adsPath -Force -ErrorAction SilentlyContinue
+
+          # Check AdsPower installation
+          $adsExe = "C:\Program Files\AdsPower Global\AdsPower Global.exe"
+          if (Test-Path $adsExe) {
+              Write-Host "SUCCESS: AdsPower installed at $adsExe"
+          } else {
+              Write-Host "Notice: Checking secondary paths for AdsPower..."
+              Get-ChildItem -Path "C:\" -Filter "AdsPower Global.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+          }
+
+      - name: Install Python Dependencies & Playwright
+        run: |
+          $env:PATH = "C:\Program Files\Python310;C:\Program Files\Python310\Scripts;$env:PATH"
+          if (Test-Path "C:\Program Files\Python310\python.exe") {
+              & "C:\Program Files\Python310\python.exe" -m pip install --upgrade pip
+              & "C:\Program Files\Python310\python.exe" -m pip install requests playwright opencv-python numpy pynacl pywin32 uiautomation
+              & "C:\Program Files\Python310\python.exe" -m playwright install chromium
+          }
+          python -m pip install --upgrade pip
+          pip install requests playwright opencv-python numpy pynacl pywin32 uiautomation
+          playwright install chromium
+
+      - name: Move Files & Setup Universal Automation Directory (Bulletproof Profile Fix)
+        run: |
+          $workDir = "C:\Automation"
+          if (!(Test-Path $workDir)) { 
+              New-Item -ItemType Directory -Path $workDir -Force 
+          }
+
+          # Copy all repo files into C:\Automation
+          Copy-Item -Path "$env:GITHUB_WORKSPACE\*" -Destination $workDir -Recurse -Force
+
+          # Create user desktop directory and copy single clean set of files
+          $rdpDesktop = "C:\Users\RDP\Desktop"
+          if (!(Test-Path $rdpDesktop)) { New-Item -ItemType Directory -Path $rdpDesktop -Force }
+          Copy-Item -Path "$workDir\bot.py" -Destination "$rdpDesktop\bot.py" -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path "$workDir\proxies.txt" -Destination "$rdpDesktop\proxies.txt" -Force -ErrorAction SilentlyContinue
+
+          # Write assigned AdsPower account if available in secrets
+          $adsEmail = "${{ secrets.ADSPOWER_EMAIL }}"
+          $adsPass = "${{ secrets.ADSPOWER_PASSWORD }}"
+          $adsKey = "${{ secrets.ADSPOWER_API_KEY }}"
+          $targetUrl = "${{ secrets.TARGET_URL }}"
+          if ($adsEmail -ne "") {
+              $accJson = @{
+                  email = $adsEmail
+                  password = $adsPass
+                  api_key = $adsKey
+                  target_url = $targetUrl
+              } | ConvertTo-Json
+              [System.IO.File]::WriteAllText("$workDir\assigned_account.json", $accJson)
+              [System.IO.File]::WriteAllText("$rdpDesktop\assigned_account.json", $accJson)
+          }
+
+          # Clean any stale public desktop icons to prevent duplicates
+          Remove-Item -Path "C:\Users\Public\Desktop\bot.py" -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Users\Public\Desktop\proxies.txt" -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Users\Public\Desktop\gemini.txt" -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Users\Public\Desktop\burst_traffic_bot.py" -Force -ErrorAction SilentlyContinue
+
+          # Copy run_pipeline.bat directly from repo
+          if (Test-Path "$workDir\run_pipeline.bat") {
+              Copy-Item -Path "$workDir\run_pipeline.bat" -Destination "$rdpDesktop\Start_Pipeline.bat" -Force
+              Copy-Item -Path "$workDir\run_pipeline.bat" -Destination "C:\Users\Public\Desktop\Start_Pipeline.bat" -Force
+          }
+
+          # Add to All Users Startup folder so it runs AUTOMATICALLY upon GUI logon
+          $startupFolder = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
+          if (!(Test-Path $startupFolder)) { New-Item -ItemType Directory -Path $startupFolder -Force }
+          Copy-Item -Path "$workDir\run_pipeline.bat" -Destination "$startupFolder\Start_Pipeline.bat" -Force
+
+          # Create desktop shortcut and direct 1-click Run_Bot.bat
+          $runBotBat = @(
+              "@echo off",
+              "title Traffic Bot Direct Launcher",
+              "color 0a",
+              "echo [*] Checking dependencies...",
+              "pip install requests playwright",
+              "echo [*] Navigating to Desktop and running bot.py...",
+              "cd /d `"%USERPROFILE%\Desktop`"",
+              "python bot.py",
+              "pause"
+          )
+          [System.IO.File]::WriteAllLines("$rdpDesktop\Run_Bot.bat", $runBotBat)
+          [System.IO.File]::WriteAllLines("C:\Users\Public\Desktop\Run_Bot.bat", $runBotBat)
+
+          $WshShell = New-Object -comObject WScript.Shell
+          $Shortcut = $WshShell.CreateShortcut("$rdpDesktop\Run Bots.lnk")
+          $Shortcut.TargetPath = "$workDir\run_pipeline.bat"
+          $Shortcut.WorkingDirectory = $workDir
+          $Shortcut.Save()
+
+          $ShortcutPub = $WshShell.CreateShortcut("C:\Users\Public\Desktop\Run Bots.lnk")
+          $ShortcutPub.TargetPath = "$workDir\run_pipeline.bat"
+          $ShortcutPub.WorkingDirectory = $workDir
+          $ShortcutPub.Save()
+
+          # Task Scheduler as secondary trigger
+          $action = New-ScheduledTaskAction -Execute "$workDir\run_pipeline.bat"
+          $trigger = New-ScheduledTaskTrigger -AtLogOn
+          $principal = New-ScheduledTaskPrincipal -UserId "RDP" -LogonType Interactive -RunLevel Highest
+          Register-ScheduledTask -TaskName "AdsPowerAutoPipeline" -Action $action -Trigger $trigger -Principal $principal -Force
+
+          Write-Host "Files staged, Startup folder wired, Task Scheduler configured."
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $env:RDP_PASSWORD"
+          Write-Host "==================`n"
+
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active..."
+              Start-Sleep -Seconds 300
+          }
