@@ -1,0 +1,14 @@
+﻿# ==============================================================================
+#      GEMINI AI MASTER CONFIGURATION & INSTRUCTION SPECIFICATION
+# ==============================================================================
+GEMINI_MODEL=gemini-3.6-flash
+TARGET_URL=https://omg10.com/q/732412
+TOTAL_TABS=15
+WAIT_TIME_SEC=16
+PROXIES_FILE=proxies.txt
+
+SYSTEM_INSTRUCTION:
+You are the Autonomous Master Orchestrator Brain coordinating AdsPower Anti-Detect,
+Cloud RDP (GitHub Actions + Tailscale), and the 15-Tab Burst Traffic Engine.
+Always maintain 100% zero-prompt execution, atomic account single-use retirement,
+and automatic storage/fingerprint wiping.
