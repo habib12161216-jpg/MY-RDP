@@ -88,25 +88,23 @@ jobs:
           path: creds.txt
           retention-days: 1
 
-      - name: Install Python 3.10
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Configure Python System Path and Install Stealth Browsers
         run: |
-          Write-Host "Downloading and Installing Python 3.10..."
-          $pyPath = "$env:TEMP\python_setup.exe"
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe' -OutFile $pyPath
-          Start-Process $pyPath -ArgumentList '/quiet InstallAllUsers=1 PrependPath=1' -Wait
-          Remove-Item $pyPath -Force -ErrorAction SilentlyContinue
+          Write-Host "Configuring Python from: $env:pythonLocation"
+          $py = "$env:pythonLocation\python.exe"
+          $pyScripts = "$env:pythonLocation\Scripts"
 
-          # Register Python in Machine PATH for all users (including RDP session)
-          [Environment]::SetEnvironmentVariable("PATH", "C:\Program Files\Python310;C:\Program Files\Python310\Scripts;$([Environment]::GetEnvironmentVariable('PATH', 'Machine'))", [EnvironmentVariableTarget]::Machine)
-          $env:PATH = "C:\Program Files\Python310;C:\Program Files\Python310\Scripts;$env:PATH"
-          Write-Host "Python 3.10 installed."
+          # Register in Machine PATH so user RDP and all batch files access python globally
+          $currMachinePath = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
+          [Environment]::SetEnvironmentVariable("PATH", "$env:pythonLocation;$pyScripts;$currMachinePath", [EnvironmentVariableTarget]::Machine)
+          $env:PATH = "$env:pythonLocation;$pyScripts;$env:PATH"
 
-      - name: Install Python Dependencies and Stealth Browsers
-        run: |
-          $env:PATH = "C:\Program Files\Python310;C:\Program Files\Python310\Scripts;$env:PATH"
-          $py = "C:\Program Files\Python310\python.exe"
-
+          # Upgrade pip & install dependencies
           & $py -m pip install --upgrade pip
           & $py -m pip install requests playwright pynacl camoufox
 
@@ -115,9 +113,10 @@ jobs:
           & $py -m camoufox fetch
 
           # Also pre-install Playwright Chromium as fallback
+          Write-Host "Pre-installing Playwright Chromium..."
           & $py -m playwright install chromium
 
-          Write-Host "All stealth engine dependencies installed."
+          Write-Host "All stealth engine dependencies installed successfully."
 
       - name: Move Files and Setup Automation Directory
         run: |
