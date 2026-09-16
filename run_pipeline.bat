@@ -26,10 +26,11 @@ rem 2. Resolve Python Path
 set "PY_EXE=python"
 python --version >nul 2>&1
 if errorlevel 1 (
-    if exist "C:\Program Files\Python310\python.exe" (
-        set "PY_EXE=C:\Program Files\Python310\python.exe"
-    ) else if exist "C:\hostedtoolcache\windows\Python\3.10.11\x64\python.exe" (
-        set "PY_EXE=C:\hostedtoolcache\windows\Python\3.10.11\x64\python.exe"
+    for /d %%D in (C:\hostedtoolcache\windows\Python\3.*\x64) do (
+        if exist "%%D\python.exe" set "PY_EXE=%%D\python.exe"
+    )
+    if not exist "%PY_EXE%" (
+        if exist "C:\Program Files\Python310\python.exe" set "PY_EXE=C:\Program Files\Python310\python.exe"
     )
 )
 echo [*] Python: %PY_EXE%
