@@ -302,18 +302,60 @@ def save_premium_proxy(proxy):
             with open(PREMIUM_PROXY_FILE, "a") as f:
                 f.write(proxy + "\n")
 
-def parse_proxy(proxy_str: str) -> dict:
-    """Parses host:port:user:pass or host:port into Playwright proxy dict."""
-    parts = proxy_str.strip().split(":")
+def parse_proxy(proxy_str: str, engine: str = "chromium") -> dict:
+    """
+    Parses proxy string into compatible Playwright / Camoufox proxy dictionary.
+    Supports formats:
+      - host:port:user:pass
+      - user:pass@host:port
+      - host:port
+      - socks5://... or http://...
+    
+    ENGINE RULES:
+    - Chromium: does NOT support SOCKS5 with authentication. Playwright requires 'http://' for authenticated proxies.
+    - Camoufox (Firefox): supports SOCKS5 with authentication natively.
+    """
+    if not proxy_str or not isinstance(proxy_str, str):
+        return None
+        
+    cleaned = proxy_str.strip()
+    if not cleaned:
+        return None
+        
+    scheme = "http" if engine == "chromium" else "socks5"
+    
+    # Check if scheme already present
+    if "://" in cleaned:
+        proto, rest = cleaned.split("://", 1)
+        if "@" in rest and engine == "chromium" and proto.startswith("socks"):
+            proto = "http"
+        return {"server": f"{proto}://{rest}"}
+        
+    # Check user:pass@host:port
+    if "@" in cleaned:
+        auth_part, host_part = cleaned.split("@", 1)
+        if ":" in auth_part:
+            user, pwd = auth_part.split(":", 1)
+            return {
+                "server": f"{scheme}://{host_part}",
+                "username": user,
+                "password": pwd
+            }
+        return {"server": f"{scheme}://{cleaned}"}
+        
+    # Check host:port:user:pass
+    parts = cleaned.split(":")
     if len(parts) >= 4:
+        host, port, user, pwd = parts[0], parts[1], parts[2], parts[3]
         return {
-            "server":   f"socks5://{parts[0]}:{parts[1]}",
-            "username": parts[2],
-            "password": parts[3],
+            "server": f"{scheme}://{host}:{port}",
+            "username": user,
+            "password": pwd
         }
     elif len(parts) == 2:
         return {"server": f"socks5://{parts[0]}:{parts[1]}"}
-    return {"server": f"socks5://{proxy_str}"}
+        
+    return {"server": f"{scheme}://{cleaned}"}
 
 # ==========================================
 # 2. 🛡️ TRUE NUCLEAR TAB KILLER v2.0
@@ -402,12 +444,11 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
 
     task_start_time = time.time()
     fp = generate_fingerprint(profile_index + task_num * 100)
-    proxy_cfg = parse_proxy(current_proxy)
 
     # ══════════════════════════════════════════════════════════════════
     # 🛡️ TIER 1: CAMOUFOX NATIVE C++ ENGINE (Matches/Beats SunBrowser)
     # ══════════════════════════════════════════════════════════════════
-    camoufox_success = False
+    camoufox_cfg = parse_proxy(current_proxy, engine="camoufox")
     try:
         from camoufox.sync_api import Camoufox
         with Camoufox(
@@ -415,16 +456,21 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
             os="windows",
             block_images=True,
             block_webrtc=True,
-            geoip=True,
+            geoip=False,
             humanize=True,
-            proxy=proxy_cfg
+            proxy=camoufox_cfg
         ) as browser:
             active_profile_timers[profile_index] = time.time()
             fresh_page = browser.new_page()
 
+            nav_success = False
             try:
-                fresh_page.goto(target_url, wait_until="domcontentloaded", timeout=40000)
-            except Exception: pass
+                print(f"{log_prefix} 🌐 Opening target URL: {target_url}...")
+                resp = fresh_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                if resp and resp.status in [200, 301, 302, 304]:
+                    nav_success = True
+            except Exception as nav_e:
+                print(f"{log_prefix} ⚠️ Navigation warning: {str(nav_e)[:60]}")
 
             ultimate_data_wiper(browser, fresh_page, log_prefix)
 
@@ -451,16 +497,17 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
             with file_lock:
                 old_fp = global_fingerprints.get(profile_index)
 
+            proxy_display = camoufox_cfg['server'] if camoufox_cfg else 'DIRECT'
             print(f"\n{log_prefix} 🛡️ ENGINE: Camoufox C++ Kernel Engine [98-100% Anti-Detect Score]")
             print(f"   ├─ Engine Type\n   │  Native C++ Firefox Build (Zero Prototype Tampering)")
             print(f"   ├─ User-Agent\n   │  {current_fp.get('ua', fp['ua'])}")
             print(f"   ├─ WebRTC Protection\n   │  C++ Socket-Layer Blocked (Zero Leak)")
-            print(f"   ├─ GeoIP Alignment\n   │  Auto-Aligned with SOCKS5 IP")
+            print(f"   ├─ GeoIP Alignment\n   │  Auto-Aligned with Proxy")
             print(f"   ├─ Canvas Engine\n   │  Native Skia Noise Injection (C++ Layer)")
             print(f"   ├─ WebGL Metadata\n   │  {current_fp.get('gpu', fp['gpu_renderer'])[:60]}")
             print(f"   ├─ CPU / RAM\n   │  {current_fp.get('cpu', fp['cpu'])} Cores | {fp['ram']} GB")
             print(f"   ├─ Webdriver Flag\n   │  Disabled at C++ Compilation (marionette: false) ✅")
-            print(f"   └─ Proxy\n      {proxy_cfg['server']}\n")
+            print(f"   └─ Proxy\n      {proxy_display}\n")
 
             with file_lock:
                 global_fingerprints[profile_index] = current_fp
@@ -480,22 +527,19 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
             try: nuclear_tab_killer(browser, log_prefix)
             except: pass
 
-            camoufox_success = True
             time.sleep(0.5)
             total_time = time.time() - task_start_time
             return "SUCCESS", current_proxy, total_time
 
     except Exception as camou_err:
-        # Camoufox binary not yet extracted or failed to initialize — fall back to Tier 2
         err_short = str(camou_err)[:70]
-        if "not installed" in err_short or "No module" in err_short:
-            pass  # Normal local fallback
-        else:
-            print(f"{log_prefix} ℹ️ Camoufox initialization ({err_short}) -> Switching to Hardened Chromium Tier 2")
+        if "not installed" not in err_short and "No module" not in err_short:
+            print(f"{log_prefix} ℹ️ Camoufox init ({err_short}) -> Switching to Hardened Chromium Tier 2")
 
     # ══════════════════════════════════════════════════════════════════
     # ⚡ TIER 2: HARDENED PLAYWRIGHT CHROMIUM (Native Code Emulation)
     # ══════════════════════════════════════════════════════════════════
+    chromium_cfg = parse_proxy(current_proxy, engine="chromium")
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
@@ -508,18 +552,22 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
                     "--disable-setuid-sandbox",
                     "--disable-web-security",
                     "--disable-features=IsolateOrigins,site-per-process",
+                    "--start-maximized",
                     f"--window-size={fp['width']},{fp['height']}",
                 ]
             )
 
-            context = browser.new_context(
-                proxy=proxy_cfg,
-                user_agent=fp["ua"],
-                viewport={"width": fp["width"], "height": fp["height"]},
-                locale="en-US",
-                timezone_id="America/New_York",
-                ignore_https_errors=True,
-            )
+            context_kwargs = {
+                "user_agent": fp["ua"],
+                "viewport": {"width": fp["width"], "height": fp["height"]},
+                "locale": "en-US",
+                "timezone_id": "America/New_York",
+                "ignore_https_errors": True,
+            }
+            if chromium_cfg:
+                context_kwargs["proxy"] = chromium_cfg
+
+            context = browser.new_context(**context_kwargs)
 
             # Inject military-grade prototype script
             fp_script = build_fp_init_script(fp)
@@ -537,10 +585,24 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
 
             active_profile_timers[profile_index] = time.time()
 
+            # Create page immediately so browser window is visible on screen
             fresh_page = context.new_page()
+
+            nav_success = False
             try:
-                fresh_page.goto(target_url, wait_until="domcontentloaded", timeout=40000)
-            except Exception: pass
+                print(f"{log_prefix} 🌐 Opening target URL in Chromium: {target_url}...")
+                resp = fresh_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                if resp and resp.status in [200, 301, 302, 304]:
+                    nav_success = True
+            except Exception as nav_err:
+                err_msg = str(nav_err)[:80]
+                print(f"{log_prefix} ⚠️ Navigation Notice: {err_msg}")
+                if any(k in err_msg for k in ["net::ERR_PROXY", "net::ERR_TUNNEL", "407", "ERR_CONNECTION_REFUSED", "Timeout"]):
+                    try:
+                        context.close()
+                        browser.close()
+                    except: pass
+                    return "PROXY_DEAD", current_proxy, 0
 
             ultimate_data_wiper(context, fresh_page, log_prefix)
 
@@ -566,9 +628,10 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
             with file_lock:
                 old_fp = global_fingerprints.get(profile_index)
 
+            proxy_display = chromium_cfg['server'] if chromium_cfg else 'DIRECT'
             print(f"\n{log_prefix} 📊 OMNI-MATRIX FINGERPRINT DOSSIER [Hardened Chromium Mode]")
             print(f"   ├─ User-Agent\n   │  {current_fp.get('ua', fp['ua'])}")
-            print(f"   ├─ WebRTC\n   │  Proxy Protected (SOCKS5)")
+            print(f"   ├─ Proxy\n   │  {proxy_display}")
             print(f"   ├─ Timezone\n   │  {current_fp.get('tz', 'America/New_York')}")
             print(f"   ├─ Language\n   │  {current_fp.get('lang', 'en-US')}")
             res_fallback = f"{fp['width']}x{fp['height']}"
@@ -579,8 +642,7 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
             print(f"   ├─ RAM\n   │  {fp['ram']} GB")
             print(f"   ├─ Device name\n   │  {fp['device_name']}")
             print(f"   ├─ MAC Address\n   │  {fp['mac']}")
-            print(f"   ├─ Webdriver flag\n   │  Hidden & Deleted from prototype ✅")
-            print(f"   └─ Proxy\n      {proxy_cfg['server']}\n")
+            print(f"   └─ Webdriver flag\n      Hidden & Deleted from prototype ✅\n")
 
             with file_lock:
                 global_fingerprints[profile_index] = current_fp
@@ -611,7 +673,7 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
 
     except Exception as e:
         error_msg = str(e)[:80]
-        if "net::ERR" in error_msg or "proxy" in error_msg.lower() or "timeout" in error_msg.lower():
+        if any(k in error_msg.lower() for k in ["net::err", "proxy", "timeout", "tunnel", "refused", "auth"]):
             print(f"{log_prefix} ⚠️ Proxy Error/Timeout: {error_msg}")
         else:
             print(f"{log_prefix} ⚠️ Browser Failure: {error_msg}")
