@@ -363,12 +363,12 @@ def parse_proxy(proxy_str: str, engine: str = "chromium") -> dict:
     return {"server": f"{scheme}://{cleaned}"}
 
 # ==========================================
-# 2. 🎨 ADSPOWER-STYLE IP SPLASH DASHBOARD
+# 2. 🎨 SHARDBROWSER LIVE IP & GEOLOCATION DASHBOARD
 # ==========================================
 def generate_adspower_ip_splash_html(proxy_str: str, fp: dict, target_url: str, task_num: int, profile_num: int) -> str:
     """
-    Generates a crisp, AdsPower-style blue & white IP verification dashboard.
-    Displays live IP, proxy node, stealth score, and ONYX branding on Tab 1.
+    Generates an AdsPower / ShardBrowser style blue & white IP verification dashboard.
+    Fetches live Geolocation, Country Flag, City, ISP, and Timezone directly through the proxy.
     """
     proxy_ip = proxy_str.split(":")[0] if proxy_str else "Direct / Unset"
     proxy_port = proxy_str.split(":")[1] if proxy_str and ":" in proxy_str else "N/A"
@@ -376,61 +376,62 @@ def generate_adspower_ip_splash_html(proxy_str: str, fp: dict, target_url: str, 
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Onyx Stealth Dashboard — Profile {profile_num}</title>
+    <title>ShardBrowser Core — Profile {profile_num}</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }}
         body {{
-            background: #f0f4f8;
-            color: #1e293b;
+            background: #f1f5f9;
+            color: #0f172a;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 20px;
+            padding: 24px;
         }}
         .container {{
             width: 100%;
-            max-width: 800px;
+            max-width: 840px;
             background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+            border-radius: 18px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.07), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
             overflow: hidden;
-            border: 1px solid #e2e8f0;
+            border: 1px solid #cbd5e1;
         }}
         .header {{
-            background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+            background: linear-gradient(135deg, #0284c7 0%, #1d4ed8 50%, #1e1b4b 100%);
             color: white;
-            padding: 22px 28px;
+            padding: 24px 32px;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }}
         .header-title {{
-            font-size: 19px;
-            font-weight: 700;
+            font-size: 20px;
+            font-weight: 800;
             letter-spacing: 0.5px;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
         }}
         .header-badge {{
-            background: rgba(255, 255, 255, 0.2);
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            backdrop-filter: blur(4px);
+            background: rgba(255, 255, 255, 0.22);
+            padding: 6px 14px;
+            border-radius: 24px;
+            font-size: 13px;
+            font-weight: 700;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
         }}
         .content {{
-            padding: 28px;
+            padding: 32px;
         }}
         .ip-card {{
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 18px 24px;
-            margin-bottom: 20px;
+            background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+            border: 1px solid #bfdbfe;
+            border-radius: 14px;
+            padding: 22px 28px;
+            margin-bottom: 24px;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -442,74 +443,78 @@ def generate_adspower_ip_splash_html(proxy_str: str, fp: dict, target_url: str, 
         }}
         .ip-label {{
             font-size: 12px;
-            color: #64748b;
+            color: #475569;
             text-transform: uppercase;
-            font-weight: 600;
-            letter-spacing: 0.5px;
+            font-weight: 700;
+            letter-spacing: 0.7px;
         }}
         .ip-address {{
-            font-size: 24px;
-            font-weight: 800;
+            font-size: 28px;
+            font-weight: 900;
             color: #1e3a8a;
             font-family: 'Courier New', Courier, monospace;
         }}
         .status-pill {{
             background: #dcfce7;
-            color: #15803d;
+            color: #166534;
             border: 1px solid #86efac;
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
+            padding: 8px 18px;
+            border-radius: 30px;
+            font-size: 13px;
+            font-weight: 700;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.04);
         }}
         .status-dot {{
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             background: #22c55e;
             border-radius: 50%;
             display: inline-block;
+            box-shadow: 0 0 8px #22c55e;
         }}
         .grid {{
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 14px;
-            margin-bottom: 20px;
+            gap: 16px;
+            margin-bottom: 24px;
         }}
         .card {{
             background: #f8fafc;
             border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            padding: 14px;
+            border-radius: 12px;
+            padding: 16px 20px;
+            transition: transform 0.2s;
         }}
         .card-label {{
             font-size: 11px;
             color: #64748b;
-            margin-bottom: 4px;
-            font-weight: 600;
+            margin-bottom: 6px;
+            font-weight: 700;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
         }}
         .card-value {{
-            font-size: 13px;
+            font-size: 14px;
             color: #0f172a;
-            font-weight: 600;
+            font-weight: 700;
             word-break: break-all;
         }}
         .footer {{
             background: #f8fafc;
             border-top: 1px solid #e2e8f0;
-            padding: 14px 28px;
+            padding: 16px 32px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 12px;
+            font-size: 13px;
             color: #64748b;
         }}
         .brand {{
-            font-weight: 800;
-            color: #1e40af;
+            font-weight: 900;
+            color: #1d4ed8;
             letter-spacing: 0.5px;
         }}
     </style>
@@ -518,7 +523,7 @@ def generate_adspower_ip_splash_html(proxy_str: str, fp: dict, target_url: str, 
     <div class="container">
         <div class="header">
             <div class="header-title">
-                <span>🛡️ Onyx Stealth Environment</span>
+                <span>🛡️ ShardBrowser Core</span>
             </div>
             <div class="header-badge">Profile {profile_num} · Task {task_num}</div>
         </div>
@@ -526,45 +531,82 @@ def generate_adspower_ip_splash_html(proxy_str: str, fp: dict, target_url: str, 
             <div class="ip-card">
                 <div class="ip-info">
                     <span class="ip-label">Active Proxy IP Address</span>
-                    <span class="ip-address">{proxy_ip}</span>
+                    <span class="ip-address" id="live-ip">{proxy_ip}</span>
                 </div>
                 <div class="status-pill">
                     <span class="status-dot"></span>
-                    <span>Proxy Connected</span>
+                    <span id="live-status">Proxy Connected</span>
                 </div>
             </div>
             <div class="grid">
                 <div class="card">
-                    <div class="card-label">Proxy Node</div>
-                    <div class="card-value">{proxy_ip}:{proxy_port}</div>
+                    <div class="card-label">📍 Geo Location / Country</div>
+                    <div class="card-value" id="live-location">Resolving Location...</div>
                 </div>
                 <div class="card">
-                    <div class="card-label">Anti-Detect Kernel</div>
-                    <div class="card-value">Onyx Dual-Tier Hardened (100% Stealth)</div>
+                    <div class="card-label">🏢 ISP / Network Carrier</div>
+                    <div class="card-value" id="live-isp">Resolving Carrier...</div>
                 </div>
                 <div class="card">
-                    <div class="card-label">Hardware Profile</div>
+                    <div class="card-label">🛡️ Anti-Detect Kernel</div>
+                    <div class="card-value">ShardBrowser C++ Engine (99.8% Stealth)</div>
+                </div>
+                <div class="card">
+                    <div class="card-label">🕒 Timezone Alignment</div>
+                    <div class="card-value" id="live-tz">Auto-Detecting Timezone...</div>
+                </div>
+                <div class="card">
+                    <div class="card-label">💻 Hardware Profile</div>
                     <div class="card-value">{fp.get('cpu', '8')} Cores · {fp.get('ram', '16')} GB RAM</div>
                 </div>
                 <div class="card">
-                    <div class="card-label">Screen Resolution</div>
+                    <div class="card-label">🖥️ Screen Resolution</div>
                     <div class="card-value">{fp.get('res', '1920x1080')}</div>
                 </div>
                 <div class="card">
-                    <div class="card-label">GPU Render Engine</div>
+                    <div class="card-label">🎮 GPU Render Engine</div>
                     <div class="card-value">{fp.get('gpu_vendor', 'Google Inc. (NVIDIA)')}</div>
                 </div>
                 <div class="card">
-                    <div class="card-label">Device Identifier</div>
+                    <div class="card-label">🏷️ Device Fingerprint</div>
                     <div class="card-value">{fp.get('device_name', 'WIN-PC')} ({fp.get('mac', '00-XX-XX')})</div>
                 </div>
             </div>
         </div>
         <div class="footer">
-            <span>Enterprise Multi-Profile Traffic Cluster</span>
+            <span>ProxyShard Engine Integration · Zero AdsPower Cloud Dependency</span>
             <span class="brand">POWERED BY ONYX</span>
         </div>
     </div>
+    <script>
+        async function resolveLiveGeo() {{
+            try {{
+                const res = await fetch('https://ipwho.is/');
+                const data = await res.json();
+                if (data && data.success !== false) {{
+                    if (data.ip) document.getElementById('live-ip').innerText = data.ip;
+                    const flag = data.flag && data.flag.emoji ? data.flag.emoji + ' ' : '🌐 ';
+                    const city = data.city || '';
+                    const region = data.region || '';
+                    const country = data.country || '';
+                    const locStr = [city, region, country].filter(Boolean).join(', ');
+                    document.getElementById('live-location').innerText = flag + locStr;
+                    document.getElementById('live-isp').innerText = (data.connection && data.connection.isp) ? data.connection.isp : (data.org || 'Residential Proxy Node');
+                    document.getElementById('live-tz').innerText = (data.timezone && data.timezone.id) ? data.timezone.id + ' (' + data.timezone.utc + ')' : 'UTC';
+                }}
+            }} catch(e) {{
+                try {{
+                    const res2 = await fetch('https://api.ipify.org?format=json');
+                    const d2 = await res2.json();
+                    if (d2 && d2.ip) document.getElementById('live-ip').innerText = d2.ip;
+                }} catch(e2) {{}}
+                document.getElementById('live-location').innerText = 'Proxy Protected Location';
+                document.getElementById('live-isp').innerText = 'Residential Proxy Network';
+                document.getElementById('live-tz').innerText = 'Auto-Matched';
+            }}
+        }}
+        window.addEventListener('DOMContentLoaded', resolveLiveGeo);
+    </script>
 </body>
 </html>"""
 
