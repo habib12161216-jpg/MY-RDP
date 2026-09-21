@@ -1,6 +1,6 @@
 # ==============================================================================
-#      ⚡ ONYX STEALTH BROWSER ENGINE — DUAL-TIER CLUSTER v3.0
-#      🚀 POWERED BY ONYX — ZERO ADSPOWER NATIVE ANTI-DETECT
+#      ⚡ SHARDBROWSER CORE ENGINE (PROXYSHARD C++ ARCHITECTURE)
+#      🚀 POWERED BY ONYX — ZERO ADSPOWER / ZERO GHOSTLY (99.8% SCORE)
 # ==============================================================================
 
 import requests
