@@ -604,9 +604,9 @@ def generate_adspower_ip_splash_html(proxy_str: str, fp: dict, target_url: str, 
                     <span class="ip-label">Active Proxy IP Address</span>
                     <span class="ip-address" id="live-ip">{proxy_ip}</span>
                 </div>
-                <div class="status-pill">
-                    <span class="status-dot"></span>
-                    <span id="live-status">Proxy Connected</span>
+                <div class="status-pill" id="live-status-pill">
+                    <span class="status-dot" id="live-status-dot"></span>
+                    <span id="live-status">Testing Proxy Connection...</span>
                 </div>
             </div>
             <div class="grid">
@@ -651,29 +651,49 @@ def generate_adspower_ip_splash_html(proxy_str: str, fp: dict, target_url: str, 
     </div>
     <script>
         async function resolveLiveGeo() {{
+            const pill = document.getElementById('live-status-pill');
+            const dot = document.getElementById('live-status-dot');
+            const statusText = document.getElementById('live-status');
+            const locText = document.getElementById('live-location');
+            const ispText = document.getElementById('live-isp');
+            const tzText = document.getElementById('live-tz');
             try {{
-                const res = await fetch('https://ipwho.is/');
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 6000);
+                const res = await fetch('https://ipwho.is/', {{ signal: controller.signal }});
                 const data = await res.json();
+                clearTimeout(timeoutId);
                 if (data && data.success !== false) {{
                     if (data.ip) document.getElementById('live-ip').innerText = data.ip;
-                    const flag = data.flag && data.flag.emoji ? data.flag.emoji + ' ' : '🌐 ';
+                    const flag = (data.flag && data.flag.emoji) ? data.flag.emoji + ' ' : '🌐 ';
                     const city = data.city || '';
                     const region = data.region || '';
                     const country = data.country || '';
                     const locStr = [city, region, country].filter(Boolean).join(', ');
-                    document.getElementById('live-location').innerText = flag + locStr;
-                    document.getElementById('live-isp').innerText = (data.connection && data.connection.isp) ? data.connection.isp : (data.org || 'Residential Proxy Node');
-                    document.getElementById('live-tz').innerText = (data.timezone && data.timezone.id) ? data.timezone.id + ' (' + data.timezone.utc + ')' : 'UTC';
+                    
+                    locText.innerHTML = '<span style="color:#16a34a; font-size:15px; font-weight:800;">' + flag + (locStr || country || 'Connected') + '</span>';
+                    ispText.innerText = (data.connection && data.connection.isp) ? data.connection.isp : (data.org || 'Residential Proxy Network');
+                    tzText.innerText = (data.timezone && data.timezone.id) ? data.timezone.id + ' (' + data.timezone.utc + ')' : 'Auto-Aligned';
+                    
+                    pill.style.background = '#dcfce7';
+                    pill.style.color = '#166534';
+                    pill.style.borderColor = '#86efac';
+                    dot.style.background = '#22c55e';
+                    dot.style.boxShadow = '0 0 8px #22c55e';
+                    statusText.innerText = 'Proxy Connected & Live';
+                    return;
                 }}
+                throw new Error("Geo query unsuccessful");
             }} catch(e) {{
-                try {{
-                    const res2 = await fetch('https://api.ipify.org?format=json');
-                    const d2 = await res2.json();
-                    if (d2 && d2.ip) document.getElementById('live-ip').innerText = d2.ip;
-                }} catch(e2) {{}}
-                document.getElementById('live-location').innerText = 'Proxy Protected Location';
-                document.getElementById('live-isp').innerText = 'Residential Proxy Network';
-                document.getElementById('live-tz').innerText = 'Auto-Matched';
+                pill.style.background = '#fee2e2';
+                pill.style.color = '#991b1b';
+                pill.style.borderColor = '#fca5a5';
+                dot.style.background = '#ef4444';
+                dot.style.boxShadow = '0 0 8px #ef4444';
+                statusText.innerText = '❌ PROXY FAILURE / DEAD';
+                locText.innerHTML = '<span style="color:#dc2626; font-weight:800;">❌ Proxy Failure (Connection Dead)</span>';
+                ispText.innerHTML = '<span style="color:#dc2626;">❌ Carrier Unreachable</span>';
+                tzText.innerText = 'N/A';
             }}
         }}
         window.addEventListener('DOMContentLoaded', resolveLiveGeo);
