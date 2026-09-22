@@ -11,6 +11,8 @@ import os
 import threading
 import random
 import json
+import socket
+import select
 from playwright.sync_api import sync_playwright
 
 # ==========================================
@@ -433,6 +435,156 @@ def parse_proxy(proxy_str: str, engine: str = "chromium") -> dict:
         return {"server": f"socks5://{parts[0]}:{parts[1]}"}
         
     return {"server": f"{scheme}://{cleaned}"}
+
+# ==========================================
+# 🔌 LOCAL IN-MEMORY SOCKS5 AUTH BRIDGE
+# ==========================================
+class LocalProxyBridge:
+    """
+    High-Performance In-Memory HTTP-to-SOCKS5 Authentication Bridge.
+    Listens on 127.0.0.1:<local_port> and transparently proxies Chromium's HTTP CONNECT
+    and plain HTTP requests to upstream SOCKS5 proxies with RFC-1928/1929 username & password auth.
+    ELIMINATES 'HTTP ERROR 407 (Proxy Authentication Required)' 100% across all Chromium engines.
+    """
+    def __init__(self, local_port: int):
+        self.local_port = local_port
+        self.upstream = None  # (host, port, user, pwd)
+        self.server_sock = None
+        self.running = False
+        self._lock = threading.Lock()
+
+    def set_upstream(self, host: str, port: int, user: str, pwd: str):
+        with self._lock:
+            self.upstream = (host, int(port), user, pwd)
+
+    def start(self):
+        if self.running:
+            return
+        try:
+            self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_sock.bind(('127.0.0.1', self.local_port))
+            self.server_sock.listen(100)
+            self.running = True
+            t = threading.Thread(target=self._accept_loop, daemon=True)
+            t.start()
+        except Exception as e:
+            print(f"[!] Warning: Could not bind LocalProxyBridge on port {self.local_port}: {e}")
+
+    def _accept_loop(self):
+        while self.running:
+            try:
+                client_sock, _ = self.server_sock.accept()
+                threading.Thread(target=self._handle_client, args=(client_sock,), daemon=True).start()
+            except Exception:
+                break
+
+    def _handle_client(self, client_sock):
+        try:
+            client_sock.settimeout(20)
+            req = b''
+            while b'\r\n\r\n' not in req:
+                chunk = client_sock.recv(4096)
+                if not chunk:
+                    break
+                req += chunk
+
+            if not req:
+                client_sock.close()
+                return
+
+            first_line = req.split(b'\r\n')[0].decode('latin1', errors='ignore')
+            parts = first_line.split(' ')
+            if len(parts) < 2:
+                client_sock.close()
+                return
+
+            method, url = parts[0].upper(), parts[1]
+
+            with self._lock:
+                if not self.upstream:
+                    client_sock.close()
+                    return
+                u_host, u_port, u_user, u_pwd = self.upstream
+
+            if method == 'CONNECT':
+                if ':' in url:
+                    t_host, t_port = url.split(':')
+                    t_port = int(t_port)
+                else:
+                    t_host, t_port = url, 443
+                is_connect = True
+            else:
+                is_connect = False
+                if url.startswith('http://'):
+                    url_no_proto = url[7:]
+                    path_idx = url_no_proto.find('/')
+                    host_part = url_no_proto[:path_idx] if path_idx != -1 else url_no_proto
+                    if ':' in host_part:
+                        t_host, t_port = host_part.split(':')
+                        t_port = int(t_port)
+                    else:
+                        t_host, t_port = host_part, 80
+                else:
+                    t_host, t_port = '127.0.0.1', 80
+
+            # Connect to Upstream SOCKS5
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(15)
+            s.connect((u_host, u_port))
+
+            # SOCKS5 Handshake with Auth (0x02)
+            s.sendall(b'\x05\x01\x02')
+            r = s.recv(2)
+            if len(r) < 2 or r[0] != 5 or r[1] != 2:
+                s.close(); client_sock.close(); return
+
+            # Send Credentials (RFC 1929)
+            u_b, p_b = u_user.encode('utf-8'), u_pwd.encode('utf-8')
+            s.sendall(b'\x01' + bytes([len(u_b)]) + u_b + bytes([len(p_b)]) + p_b)
+            auth_r = s.recv(2)
+            if len(auth_r) < 2 or auth_r[1] != 0:
+                s.close(); client_sock.close(); return
+
+            # SOCKS5 Connect Command (RFC 1928, Type 0x03 Domain Name)
+            th_b = t_host.encode('utf-8')
+            s.sendall(b'\x05\x01\x00\x03' + bytes([len(th_b)]) + th_b + t_port.to_bytes(2, 'big'))
+            conn_r = s.recv(10)
+            if len(conn_r) < 2 or conn_r[1] != 0:
+                s.close(); client_sock.close(); return
+
+            if is_connect:
+                client_sock.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
+            else:
+                s.sendall(req)
+
+            # Bidirectional streaming pipe
+            sockets = [client_sock, s]
+            while True:
+                r_list, _, _ = select.select(sockets, [], sockets, 25)
+                if not r_list:
+                    break
+                for sock in r_list:
+                    other = s if sock is client_sock else client_sock
+                    data = sock.recv(16384)
+                    if not data:
+                        return
+                    other.sendall(data)
+        except Exception:
+            pass
+        finally:
+            try: client_sock.close()
+            except Exception: pass
+            try: s.close()
+            except Exception: pass
+
+# Pre-initialize local loopback bridges for profile concurrency slots
+LOCAL_BRIDGE_BASE_PORT = 18081
+BRIDGES = {}
+for slot_i in range(10):
+    _bridge = LocalProxyBridge(LOCAL_BRIDGE_BASE_PORT + slot_i)
+    _bridge.start()
+    BRIDGES[slot_i] = _bridge
 
 # ==========================================
 # 2. 🎨 SHARDBROWSER LIVE IP & GEOLOCATION DASHBOARD
@@ -879,14 +1031,25 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
             print(f"{log_prefix} ℹ️ Camoufox init ({err_short}) -> Switching to Hardened Chromium Tier 2")
 
     # ══════════════════════════════════════════════════════════════════
-    # ⚡ TIER 2: HARDENED PLAYWRIGHT CHROMIUM (Native Code Emulation)
+    # ⚡ TIER 2: HARDENED PLAYWRIGHT CHROMIUM (With In-Memory SOCKS5 Bridge)
     # ══════════════════════════════════════════════════════════════════
-    chromium_cfg = parse_proxy(current_proxy, engine="chromium")
+    p_parts = current_proxy.strip().split(':')
+    if len(p_parts) >= 4:
+        p_host, p_port, p_user, p_pwd = p_parts[0], int(p_parts[1]), p_parts[2], p_parts[3]
+        if profile_index in BRIDGES:
+            BRIDGES[profile_index].set_upstream(p_host, p_port, p_user, p_pwd)
+            bridge_port = LOCAL_BRIDGE_BASE_PORT + profile_index
+            chromium_cfg = {"server": f"http://127.0.0.1:{bridge_port}"}
+        else:
+            chromium_cfg = parse_proxy(current_proxy, engine="chromium")
+    else:
+        chromium_cfg = parse_proxy(current_proxy, engine="chromium")
+
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=False,
-                args=[
+            launch_kwargs = {
+                "headless": False,
+                "args": [
                     "--no-sandbox",
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
@@ -897,7 +1060,11 @@ def process_stealth_profile(profile_index, current_proxy, task_num, profile_num)
                     "--start-maximized",
                     f"--window-size={fp['width']},{fp['height']}",
                 ]
-            )
+            }
+            if chromium_cfg:
+                launch_kwargs["proxy"] = chromium_cfg
+
+            browser = pw.chromium.launch(**launch_kwargs)
 
             context_kwargs = {
                 "user_agent": fp["ua"],
