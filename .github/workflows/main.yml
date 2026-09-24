@@ -93,7 +93,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Configure Python System Path and Install Stealth Browsers
+      - name: Configure Python and Install AdsPower Global Desktop
         run: |
           Write-Host "Configuring Python from: $env:pythonLocation"
           $py = "$env:pythonLocation\python.exe"
@@ -106,19 +106,26 @@ jobs:
 
           # Upgrade pip & install dependencies
           & $py -m pip install --upgrade pip
-          & $py -m pip install requests playwright pynacl camoufox
-
-          # Pre-download Camoufox Firefox binary (so run_pipeline.bat starts instantly)
-          Write-Host "Pre-fetching Camoufox binary..."
-          & $py -m camoufox fetch
-
-          # Also pre-install Playwright Chromium as fallback
-          Write-Host "Pre-installing Playwright Chromium..."
+          & $py -m pip install requests playwright opencv-python numpy pynacl pywin32 uiautomation
           & $py -m playwright install chromium
 
-          Write-Host "All stealth engine dependencies installed successfully."
+          # Download and install AdsPower Global Desktop
+          Write-Host "Downloading AdsPower Global Official Installer..."
+          $adsPath = "$env:TEMP\AdsPower-Global-Setup.exe"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri 'https://version.adspower.net/software/win64-global/8.7.23/AdsPower-Global-8.7.23-x64.exe' -OutFile $adsPath
+          Write-Host "Installing AdsPower Global silently for all users..."
+          Start-Process -FilePath $adsPath -ArgumentList "/S", "/allusers" -Wait
+          Start-Sleep -Seconds 5
+          Remove-Item $adsPath -Force -ErrorAction SilentlyContinue
+
+          Write-Host "AdsPower Global and Python dependencies installed successfully."
 
       - name: Move Files and Setup Automation Directory
+        env:
+          ADSPOWER_EMAIL: ${{ secrets.ADSPOWER_EMAIL }}
+          ADSPOWER_PASSWORD: ${{ secrets.ADSPOWER_PASSWORD }}
+          ADSPOWER_API_KEY: ${{ secrets.ADSPOWER_API_KEY }}
         run: |
           $workDir = "C:\Automation"
           if (!(Test-Path $workDir)) {
@@ -131,8 +138,21 @@ jobs:
           # Setup RDP user Desktop
           $rdpDesktop = "C:\Users\RDP\Desktop"
           if (!(Test-Path $rdpDesktop)) { New-Item -ItemType Directory -Path $rdpDesktop -Force }
-          Copy-Item -Path "$workDir\bot.py"      -Destination "$rdpDesktop\bot.py"      -Force -ErrorAction SilentlyContinue
-          Copy-Item -Path "$workDir\proxies.txt" -Destination "$rdpDesktop\proxies.txt" -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path "$workDir\bot.py"                           -Destination "$rdpDesktop\bot.py"                           -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path "$workDir\proxies.txt"                      -Destination "$rdpDesktop\proxies.txt"                      -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path "$workDir\adspower_login_engine.py"         -Destination "$rdpDesktop\adspower_login_engine.py"         -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path "$workDir\adspower_accounts_combos.txt"      -Destination "$rdpDesktop\adspower_accounts_combos.txt"      -Force -ErrorAction SilentlyContinue
+
+          # Save assigned account if secrets available
+          if ($env:ADSPOWER_EMAIL -and $env:ADSPOWER_PASSWORD) {
+              $acc = @{
+                  email = $env:ADSPOWER_EMAIL
+                  password = $env:ADSPOWER_PASSWORD
+                  api_key = $env:ADSPOWER_API_KEY
+              } | ConvertTo-Json
+              $acc | Out-File -FilePath "$workDir\assigned_account.json" -Encoding utf8
+              $acc | Out-File -FilePath "$rdpDesktop\assigned_account.json" -Encoding utf8
+          }
 
           # Copy orchestrator_config.json so bot.py can read settings dynamically
           $rdpConfigDir = "$rdpDesktop\master_orchestrator"
